@@ -5,6 +5,7 @@ import android.content.*
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.session.MediaController
 import android.os.*
 import android.view.Gravity
 import android.view.MotionEvent
@@ -20,6 +21,7 @@ class IslandService : Service() {
     companion object {
         const val ACTION_NOTIFICATION = "com.yash.hiosisland.NOTIFICATION"
         const val ACTION_NOTIFICATION_REMOVED = "com.yash.hiosisland.NOTIFICATION_REMOVED"
+        const val ACTION_MEDIA_SESSION = "com.yash.hiosisland.MEDIA_SESSION"
         private const val CHANNEL = "hios_island_service"
     }
 
@@ -33,6 +35,10 @@ class IslandService : Service() {
     private var mediaToggle: PendingIntent? = null
     private var mediaNext: PendingIntent? = null
     private var mediaPrevious: PendingIntent? = null
+    private var mediaController: MediaController? = null
+    private var mediaTitle = ""
+    private var mediaArtist = ""
+    private var mediaPlaying = false
     private var timer: CountDownTimer? = null
     private var timerEnd = 0L
     private var timerText = ""
@@ -54,6 +60,16 @@ class IslandService : Service() {
                 ACTION_NOTIFICATION_REMOVED -> {
                     notificationTitle = "HiOS Island"
                     notificationText = "You're all caught up"
+                    render()
+                }
+                ACTION_MEDIA_SESSION -> {
+                    mediaTitle = intent.getStringExtra("media_title").orEmpty()
+                    mediaArtist = intent.getStringExtra("media_artist").orEmpty()
+                    mediaPlaying = intent.getBooleanExtra("media_playing", false)
+                    val token = if (Build.VERSION.SDK_INT >= 33)
+                        intent.getParcelableExtra("media_token", android.media.session.MediaSession.Token::class.java)
+                    else @Suppress("DEPRECATION") intent.getParcelableExtra("media_token")
+                    mediaController = try { token?.let { MediaController(this@IslandService, it) } } catch (_: Exception) { null }
                     render()
                 }
                 Intent.ACTION_BATTERY_CHANGED -> {
@@ -80,6 +96,7 @@ class IslandService : Service() {
         registerReceiver(eventReceiver, IntentFilter().apply {
             addAction(ACTION_NOTIFICATION)
             addAction(ACTION_NOTIFICATION_REMOVED)
+            addAction(ACTION_MEDIA_SESSION)
             addAction(Intent.ACTION_BATTERY_CHANGED)
         })
         val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -155,7 +172,7 @@ class IslandService : Service() {
             setTextColor(if (charging) 0xFF8DE6B5.toInt() else 0xFF9EB9FF.toInt())
         }
         val label = TextView(this).apply {
-            text = if (timerEnd > 0L) timerText else if (notificationTitle != "HiOS Island") notificationTitle.take(18) else "HiOS Island"
+            text = if (timerEnd > 0L) timerText else if (mediaTitle.isNotBlank()) mediaTitle.take(18) else if (notificationTitle != "HiOS Island") notificationTitle.take(18) else "HiOS Island"
             textSize = 12f
             setTextColor(Color.WHITE)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
@@ -177,13 +194,13 @@ class IslandService : Service() {
             val divider = View(this).apply { setBackgroundColor(0xFF30343D.toInt()) }
             box.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(5); bottomMargin = dp(8) })
             val title = TextView(this).apply {
-                text = notificationTitle
+                text = if (mediaTitle.isNotBlank()) mediaTitle else notificationTitle
                 textSize = 14f
                 setTextColor(Color.WHITE)
                 typeface = Typeface.DEFAULT_BOLD
             }
             val body = TextView(this).apply {
-                text = if (timerEnd > 0L) "Timer running • $timerText" else notificationText.ifBlank { "No new notifications" }
+                text = if (timerEnd > 0L) "Timer running • $timerText" else if (mediaTitle.isNotBlank()) mediaArtist.ifBlank { "Now playing" } else notificationText.ifBlank { "No new notifications" }
                 textSize = 12f
                 setTextColor(0xFFB9C2D2.toInt())
                 maxLines = 3
@@ -195,9 +212,17 @@ class IslandService : Service() {
                 gravity = Gravity.CENTER
                 setPadding(0, dp(10), 0, 0)
             }
-            if (mediaPrevious != null) actions.addView(actionButton("‹") { send(mediaPrevious) })
-            if (mediaToggle != null) actions.addView(actionButton("▶ / Ⅱ") { send(mediaToggle) })
-            if (mediaNext != null) actions.addView(actionButton("›") { send(mediaNext) })
+            if (mediaController != null) {
+                actions.addView(actionButton("‹") { mediaController?.transportControls?.skipToPrevious() })
+                actions.addView(actionButton(if (mediaPlaying) "Ⅱ" else "▶") {
+                    try { if (mediaPlaying) mediaController?.transportControls?.pause() else mediaController?.transportControls?.play() } catch (_: Exception) {}
+                })
+                actions.addView(actionButton("›") { mediaController?.transportControls?.skipToNext() })
+            } else {
+                if (mediaPrevious != null) actions.addView(actionButton("‹") { send(mediaPrevious) })
+                if (mediaToggle != null) actions.addView(actionButton("▶ / Ⅱ") { send(mediaToggle) })
+                if (mediaNext != null) actions.addView(actionButton("›") { send(mediaNext) })
+            }
             actions.addView(actionButton("5 min") { startTimer(5 * 60_000L) })
             actions.addView(actionButton("15 min") { startTimer(15 * 60_000L) })
             actions.addView(actionButton("×") { cancelTimer(); expanded = false; resize(); render() })
