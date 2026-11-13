@@ -1,25 +1,20 @@
-# HiOS Island 2.1
+# HiOS Island 2.2
 
 A responsive live-island overlay experiment tuned for TECNO Spark 8C / Android 11.
 
-## 2.1 visual and interaction upgrade
-- Adaptive compact and expanded widths based on available display width.
-- Layered translucent gradient surfaces, subtle glass-like border and elevated depth.
-- Animated entrance, expansion, collapse and action feedback.
-- Dedicated activity card hierarchy for media, notifications, timers and charging.
-- Media progress indicator and media-session transport controls.
-- Timer shortcuts, battery state and swipe gestures retained.
-- Defensive overlay permission check and receiver registration for Android 13+.
+## 2.2 polish and system integration
+- Notification listener restores the latest active notification when access connects.
+- Notification previews carry their originating content action; tapping the expanded notification card opens the source notification when its PendingIntent is available.
+- Notification removal is matched by notification key so dismissing an unrelated notification does not clear the currently displayed preview.
+- Media session callbacks publish metadata and playback-state changes while a session is active.
+- Setup screen re-checks overlay and notification-listener permissions when returning from Android Settings.
+- Existing adaptive glass UI, compact/expanded layout, media controls, timer shortcuts and battery state are retained.
 
-## Platform notes
-Android 11 does not expose a universal, low-cost way for a third-party overlay to blur arbitrary apps underneath it. The interface therefore uses layered translucent glass styling rather than promising true live background blur. Some OEM power managers may still stop background services; users may need to allow HiOS Island to run in the background.
+## Platform and privacy notes
+- Notification access is optional for starting the overlay, but required for notification previews and media-session integration.
+- Android 11 does not expose a universal, low-cost way for third-party overlays to blur arbitrary apps underneath. The island uses layered translucent styling instead of claiming true live background blur.
+- Notification text and media metadata are processed locally. This app does not upload them to a server.
+- OEM battery management may restrict background execution; allow the app to run in the background if the system stops it.
 
-Notification previews and media metadata are processed locally. The app does not upload this information to a server.
-
-## Roadmap
-1. 2.1: adaptive glass UI and interaction foundation.
-2. 2.2: robust notification queue, per-app filters and richer live activity states.
-3. 2.3: settings for appearance, animation, haptics and battery-aware behavior.
-4. Future: optional artwork rendering and deeper media-session lifecycle handling.
-
-Build with `gradle assembleDebug`. CI success confirms compilation, not device-level behavior.
+## Build and verification
+Build with `gradle assembleDebug`. CI success confirms compilation and artifact upload, not device-level correctness. Test notification click-through, notification dismissal, media-session switching, permission refresh, overlay positioning and service stability on the target phone.
