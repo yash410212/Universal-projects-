@@ -20,25 +20,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 class MainActivity : ComponentActivity() {
+    private val permissionRefresh = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { IslandSetupScreen(
-            overlayGranted = { Settings.canDrawOverlays(this) },
-            listenerGranted = { isNotificationAccessEnabled() },
-            requestOverlay = {
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            },
-            requestListener = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
-            startIsland = {
-                val intent = Intent(this, IslandService::class.java)
-                if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-            },
-            stopIsland = { stopService(Intent(this, IslandService::class.java)) }
-        ) }
+        setContent {
+            IslandSetupScreen(
+                refreshKey = permissionRefresh.intValue,
+                overlayGranted = { Settings.canDrawOverlays(this) },
+                listenerGranted = { isNotificationAccessEnabled() },
+                requestOverlay = {
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                },
+                requestListener = { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
+                startIsland = {
+                    val intent = Intent(this, IslandService::class.java)
+                    if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+                },
+                stopIsland = { stopService(Intent(this, IslandService::class.java)) }
+            )
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        permissionRefresh.intValue++
     }
 
     private fun isNotificationAccessEnabled(): Boolean {
@@ -49,6 +55,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun IslandSetupScreen(
+    refreshKey: Int,
     overlayGranted: () -> Boolean,
     listenerGranted: () -> Boolean,
     requestOverlay: () -> Unit,
@@ -56,9 +63,8 @@ private fun IslandSetupScreen(
     startIsland: () -> Unit,
     stopIsland: () -> Unit
 ) {
-    var refresh by remember { mutableIntStateOf(0) }
-    val overlay = remember(refresh) { overlayGranted() }
-    val listener = remember(refresh) { listenerGranted() }
+    val overlay = remember(refreshKey) { overlayGranted() }
+    val listener = remember(refreshKey) { listenerGranted() }
     MaterialTheme(colorScheme = darkColorScheme(
         primary = Color(0xFFB8C8FF),
         background = Color(0xFF07090E),
@@ -67,30 +73,31 @@ private fun IslandSetupScreen(
     )) {
         Column(
             Modifier.fillMaxSize().background(Color(0xFF07090E)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(14.dp))
             Text("HiOS Island", fontSize = 31.sp, fontWeight = FontWeight.Bold, color = Color.White)
             Text("A smarter live island for your TECNO display", color = Color(0xFFADB7CC), fontSize = 14.sp)
             IslandPreview()
-            Text("SETUP", color = Color(0xFF9BA9C5), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-            PermissionRow("Display over other apps", "Required to show the island above any screen", overlay)
-            Button(onClick = { requestOverlay(); refresh++ }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (overlay) "Overlay permission granted" else "Grant overlay permission")
+            Text("SYSTEM INTEGRATION", color = Color(0xFF9BA9C5), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            PermissionRow("Display over other apps", "Required for the island overlay", overlay)
+            Button(onClick = requestOverlay, modifier = Modifier.fillMaxWidth()) {
+                Text(if (overlay) "Overlay permission ready" else "Grant overlay permission")
             }
-            PermissionRow("Notification access", "Reads notification previews and media controls on-device", listener)
-            OutlinedButton(onClick = { requestListener(); refresh++ }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (listener) "Notification access enabled" else "Enable notification access")
+            PermissionRow("Notification access", "Allows notification previews and live media controls", listener)
+            OutlinedButton(onClick = requestListener, modifier = Modifier.fillMaxWidth()) {
+                Text(if (listener) "Notification access ready" else "Enable notification access")
             }
+            Text("Notification access is optional; media and notification integration need it.", color = Color(0xFF8996AC), fontSize = 11.sp)
             Spacer(Modifier.weight(1f))
             Button(
-                onClick = { startIsland() },
+                onClick = startIsland,
                 enabled = overlay,
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(18.dp)
             ) { Text("Start HiOS Island", fontWeight = FontWeight.Bold) }
             OutlinedButton(onClick = stopIsland, modifier = Modifier.fillMaxWidth()) { Text("Stop Island") }
-            Text("Android 11+ • TECNO Spark 8C tuned • Notification data stays on your device", color = Color(0xFF7F8AA0), fontSize = 10.sp)
+            Text("Android 11+ • Spark 8C tuned • Data stays on-device", color = Color(0xFF7F8AA0), fontSize = 10.sp)
         }
     }
 }
@@ -113,7 +120,7 @@ private fun IslandPreview() {
                 Text("●", color = Color(0xFF8BAEFF), fontSize = 10.sp)
             }
         }
-        Text("Live notifications  •  Music  •  Charging  •  Timers", color = Color(0xFFB9C4D8), fontSize = 12.sp)
+        Text("Notifications  •  Music  •  Charging  •  Timers", color = Color(0xFFB9C4D8), fontSize = 12.sp)
     }
 }
 
