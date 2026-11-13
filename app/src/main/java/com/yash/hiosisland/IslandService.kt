@@ -7,15 +7,17 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.session.MediaController
 import android.os.*
+import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.*
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import java.util.Locale
 
 class IslandService : Service() {
     companion object {
@@ -30,6 +32,7 @@ class IslandService : Service() {
     private var expanded = false
     private var notificationTitle = "HiOS Island"
     private var notificationText = "Tap to explore live activities"
+    private var notificationPackage = ""
     private var batteryLevel = 0
     private var charging = false
     private var mediaToggle: PendingIntent? = null
@@ -39,12 +42,14 @@ class IslandService : Service() {
     private var mediaTitle = ""
     private var mediaArtist = ""
     private var mediaPlaying = false
+    private var mediaDuration = 0L
+    private var mediaPosition = 0L
     private var timer: CountDownTimer? = null
     private var timerEnd = 0L
     private var timerText = ""
-    private val handler = Handler(Looper.getMainLooper())
     private var lastTouchX = 0f
     private var lastTouchY = 0f
+    private var lastRenderAt = 0L
 
     private val eventReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -52,6 +57,7 @@ class IslandService : Service() {
                 ACTION_NOTIFICATION -> {
                     notificationTitle = intent.getStringExtra("title") ?: "Notification"
                     notificationText = intent.getStringExtra("text") ?: ""
+                    notificationPackage = intent.getStringExtra("package").orEmpty()
                     mediaToggle = getPending(intent, "media_toggle")
                     mediaNext = getPending(intent, "media_next")
                     mediaPrevious = getPending(intent, "media_previous")
@@ -60,12 +66,15 @@ class IslandService : Service() {
                 ACTION_NOTIFICATION_REMOVED -> {
                     notificationTitle = "HiOS Island"
                     notificationText = "You're all caught up"
+                    notificationPackage = ""
                     render()
                 }
                 ACTION_MEDIA_SESSION -> {
                     mediaTitle = intent.getStringExtra("media_title").orEmpty()
                     mediaArtist = intent.getStringExtra("media_artist").orEmpty()
                     mediaPlaying = intent.getBooleanExtra("media_playing", false)
+                    mediaPosition = intent.getLongExtra("media_position", 0L).coerceAtLeast(0L)
+                    mediaDuration = intent.getLongExtra("media_duration", 0L).coerceAtLeast(0L)
                     val token = if (Build.VERSION.SDK_INT >= 33)
                         intent.getParcelableExtra("media_token", android.media.session.MediaSession.Token::class.java)
                     else @Suppress("DEPRECATION") intent.getParcelableExtra("media_token")
@@ -93,18 +102,20 @@ class IslandService : Service() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         createChannel()
         startForeground(71, serviceNotification())
-        registerReceiver(eventReceiver, IntentFilter().apply {
+        val filter = IntentFilter().apply {
             addAction(ACTION_NOTIFICATION)
             addAction(ACTION_NOTIFICATION_REMOVED)
             addAction(ACTION_MEDIA_SESSION)
             addAction(Intent.ACTION_BATTERY_CHANGED)
-        })
-        val battery = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        battery?.let { eventReceiver.onReceive(this, it) }
+        }
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(eventReceiver, filter, RECEIVER_NOT_EXPORTED)
+        else @Suppress("DEPRECATION") registerReceiver(eventReceiver, filter)
+        registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.let { eventReceiver.onReceive(this, it) }
         showOverlay()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!Settings.canDrawOverlays(this)) { stopSelf(); return START_NOT_STICKY }
         if (root == null) showOverlay()
         return START_STICKY
     }
@@ -127,27 +138,39 @@ class IslandService : Service() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun shape(color: Int, radius: Int, stroke: Int = 0): GradientDrawable =
-        GradientDrawable().apply {
-            setColor(color)
+    private fun glassBackground(radius: Int, expandedCard: Boolean = false): GradientDrawable {
+        val colors = if (expandedCard) intArrayOf(0xF51B2230.toInt(), 0xF20D111B.toInt(), 0xF5222938.toInt())
+            else intArrayOf(0xF51A202B.toInt(), 0xF70A0D13.toInt(), 0xF51B2230.toInt())
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
             cornerRadius = dp(radius).toFloat()
-            if (stroke != 0) setStroke(dp(1), stroke)
+            setStroke(dp(1), 0x667F91B5)
+        }
+    }
+    private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView =
+        TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            if (bold) typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            includeFontPadding = false
         }
 
     private fun showOverlay() {
-        if (!android.provider.Settings.canDrawOverlays(this) || root != null) return
+        if (!Settings.canDrawOverlays(this) || root != null) return
+        val screenWidth = resources.displayMetrics.widthPixels
+        val compactWidth = min(dp(224), screenWidth - dp(28))
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = shape(Color.BLACK, 28, 0xFF30343D.toInt())
-            setPadding(dp(10), dp(7), dp(10), dp(8))
-            elevation = dp(12).toFloat()
+            background = glassBackground(30)
+            setPadding(dp(11), dp(7), dp(11), dp(9))
+            elevation = dp(18).toFloat()
+            clipToOutline = true
         }
         root = container
         render()
         val type = if (Build.VERSION.SDK_INT >= 26) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else WindowManager.LayoutParams.TYPE_PHONE
         val params = WindowManager.LayoutParams(
-            dp(204), WindowManager.LayoutParams.WRAP_CONTENT, type,
+            compactWidth, WindowManager.LayoutParams.WRAP_CONTENT, type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             android.graphics.PixelFormat.TRANSLUCENT
         ).apply {
@@ -155,7 +178,9 @@ class IslandService : Service() {
             y = dp(2)
             if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
-        try { wm.addView(container, params) } catch (_: Exception) { root = null }
+        try { wm.addView(container, params); container.alpha = 0f; container.scaleX = .92f; container.scaleY = .92f
+            container.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(DecelerateInterpolator()).start()
+        } catch (_: Exception) { root = null }
     }
 
     private fun render() {
@@ -164,81 +189,92 @@ class IslandService : Service() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(5), dp(2), dp(5), dp(2))
+            setPadding(dp(3), dp(2), dp(3), dp(2))
         }
-        val dot = TextView(this).apply {
-            text = if (charging) "ϟ" else "●"
-            textSize = 14f
-            setTextColor(if (charging) 0xFF8DE6B5.toInt() else 0xFF9EB9FF.toInt())
+        val indicator = TextView(this).apply {
+            text = when { charging -> "ϟ"; mediaPlaying -> "♫"; timerEnd > 0L -> "◷"; else -> "●" }
+            textSize = 16f
+            setTextColor(if (charging) 0xFF8DE6B5.toInt() else 0xFFB4C8FF.toInt())
+            gravity = Gravity.CENTER
         }
-        val label = TextView(this).apply {
-            text = if (timerEnd > 0L) timerText else if (mediaTitle.isNotBlank()) mediaTitle.take(18) else if (notificationTitle != "HiOS Island") notificationTitle.take(18) else "HiOS Island"
-            textSize = 12f
-            setTextColor(Color.WHITE)
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            maxLines = 1
+        val labelValue = when {
+            timerEnd > 0L -> timerText
+            mediaTitle.isNotBlank() -> mediaTitle
+            notificationTitle != "HiOS Island" -> notificationTitle
+            else -> "HiOS Island"
         }
-        val spacer = View(this)
-        val status = TextView(this).apply {
-            text = if (charging) "$batteryLevel% ϟ" else if (batteryLevel > 0) "$batteryLevel%" else "LIVE"
-            textSize = 10f
-            setTextColor(0xFFB5C0D3.toInt())
-        }
-        header.addView(dot, LinearLayout.LayoutParams(dp(20), dp(25)))
-        header.addView(label, LinearLayout.LayoutParams(0, dp(25), 1f))
-        header.addView(spacer, LinearLayout.LayoutParams(dp(5), 1))
+        val label = text(labelValue.take(22), 12f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        val status = text(if (charging) "$batteryLevel% ϟ" else if (batteryLevel > 0) "$batteryLevel%" else "LIVE", 10f, 0xFFB9C7DF.toInt())
+        header.addView(indicator, LinearLayout.LayoutParams(dp(22), dp(27)))
+        header.addView(label, LinearLayout.LayoutParams(0, dp(27), 1f).apply { marginStart = dp(5) })
         header.addView(status)
         header.setOnClickListener { expanded = !expanded; resize(); render() }
         box.addView(header)
+
         if (expanded) {
-            val divider = View(this).apply { setBackgroundColor(0xFF30343D.toInt()) }
-            box.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(5); bottomMargin = dp(8) })
-            val title = TextView(this).apply {
-                text = if (mediaTitle.isNotBlank()) mediaTitle else notificationTitle
-                textSize = 14f
-                setTextColor(Color.WHITE)
-                typeface = Typeface.DEFAULT_BOLD
+            val divider = View(this).apply { setBackgroundColor(0x557E8DA8) }
+            box.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(7); bottomMargin = dp(10) })
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = glassBackground(22, true)
+                setPadding(dp(12), dp(11), dp(12), dp(11))
             }
-            val body = TextView(this).apply {
-                text = if (timerEnd > 0L) "Timer running • $timerText" else if (mediaTitle.isNotBlank()) mediaArtist.ifBlank { "Now playing" } else notificationText.ifBlank { "No new notifications" }
-                textSize = 12f
-                setTextColor(0xFFB9C2D2.toInt())
-                maxLines = 3
+            val typeLabel = when {
+                timerEnd > 0L -> "TIMER"
+                mediaTitle.isNotBlank() -> "NOW PLAYING"
+                notificationTitle != "HiOS Island" -> "NOTIFICATION"
+                charging -> "POWER"
+                else -> "LIVE ISLAND"
             }
-            box.addView(title)
-            box.addView(body, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-            val actions = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-                setPadding(0, dp(10), 0, 0)
+            card.addView(text(typeLabel, 9f, 0xFF9EAFCC.toInt(), true))
+            val title = text(when {
+                timerEnd > 0L -> "Countdown running"
+                mediaTitle.isNotBlank() -> mediaTitle
+                else -> notificationTitle
+            }, 15f, Color.WHITE, true).apply { maxLines = 2 }
+            card.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+            val subtitle = when {
+                timerEnd > 0L -> "Time remaining  •  $timerText"
+                mediaTitle.isNotBlank() -> mediaArtist.ifBlank { "Media session active" }
+                notificationTitle != "HiOS Island" -> notificationText.ifBlank { notificationPackage }
+                charging -> "Battery at $batteryLevel%  •  Charging"
+                else -> "Your notifications and activities appear here"
             }
+            card.addView(text(subtitle, 11f, 0xFFB6C2D5.toInt()).apply { maxLines = 3 }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+            if (mediaTitle.isNotBlank() && mediaDuration > 0L) {
+                val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 1000
+                    progress = ((mediaPosition.toFloat() / mediaDuration).coerceIn(0f, 1f) * 1000).toInt()
+                    progressTintList = android.content.res.ColorStateList.valueOf(0xFFB9C9FF.toInt())
+                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0x557F8CA6)
+                }
+                card.addView(progress, LinearLayout.LayoutParams(-1, dp(3)).apply { topMargin = dp(10) })
+            }
+            box.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(9) })
+
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             if (mediaController != null) {
-                actions.addView(actionButton("‹") { mediaController?.transportControls?.skipToPrevious() })
+                actions.addView(actionButton("⏮") { safeMediaAction { mediaController?.transportControls?.skipToPrevious() } })
                 actions.addView(actionButton(if (mediaPlaying) "Ⅱ" else "▶") {
-                    try { if (mediaPlaying) mediaController?.transportControls?.pause() else mediaController?.transportControls?.play() } catch (_: Exception) {}
-                })
-                actions.addView(actionButton("›") { mediaController?.transportControls?.skipToNext() })
+                    safeMediaAction { if (mediaPlaying) mediaController?.transportControls?.pause() else mediaController?.transportControls?.play() }
+                }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(5) })
+                actions.addView(actionButton("⏭") { safeMediaAction { mediaController?.transportControls?.skipToNext() } })
             } else {
-                if (mediaPrevious != null) actions.addView(actionButton("‹") { send(mediaPrevious) })
+                if (mediaPrevious != null) actions.addView(actionButton("⏮") { send(mediaPrevious) })
                 if (mediaToggle != null) actions.addView(actionButton("▶ / Ⅱ") { send(mediaToggle) })
-                if (mediaNext != null) actions.addView(actionButton("›") { send(mediaNext) })
+                if (mediaNext != null) actions.addView(actionButton("⏭") { send(mediaNext) })
             }
-            actions.addView(actionButton("5 min") { startTimer(5 * 60_000L) })
-            actions.addView(actionButton("15 min") { startTimer(15 * 60_000L) })
+            actions.addView(actionButton("5m") { startTimer(5 * 60_000L) })
+            actions.addView(actionButton("15m") { startTimer(15 * 60_000L) })
             actions.addView(actionButton("×") { cancelTimer(); expanded = false; resize(); render() })
             box.addView(actions)
-            val hint = TextView(this).apply {
-                text = "Tap the island to collapse  •  Swipe up to dismiss"
-                textSize = 9f
-                setTextColor(0xFF758096.toInt())
-                gravity = Gravity.CENTER
-                setPadding(0, dp(8), 0, 0)
-            }
-            box.addView(hint)
+            box.addView(text("Tap pill to collapse  •  Swipe up to close", 9f, 0xFF7F8CA5.toInt()).apply { gravity = Gravity.CENTER; setPadding(0, dp(9), 0, 0) })
+            box.alpha = 0f
+            box.animate().alpha(1f).setDuration(170).start()
         }
         box.setOnTouchListener { _, event ->
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> { lastTouchX = event.rawX; lastTouchY = event.rawY; true }
+                MotionEvent.ACTION_DOWN -> { lastTouchX = event.rawX; lastTouchY = event.rawY; false }
                 MotionEvent.ACTION_UP -> {
                     val dx = event.rawX - lastTouchX
                     val dy = event.rawY - lastTouchY
@@ -246,36 +282,44 @@ class IslandService : Service() {
                     else if (abs(dx) > dp(70)) { expanded = false; resize(); render(); true }
                     else false
                 }
-                else -> true
+                else -> false
             }
         }
     }
 
-    private fun actionButton(text: String, action: () -> Unit): TextView =
+    private fun safeMediaAction(action: () -> Unit) { try { action() } catch (_: Exception) {} }
+
+    private fun actionButton(label: String, action: () -> Unit): TextView =
         TextView(this).apply {
-            this.text = text
+            text = label
             textSize = 11f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            background = shape(0xFF252B38.toInt(), 18)
-            setPadding(dp(9), dp(8), dp(9), dp(8))
-            val lp = LinearLayout.LayoutParams(-2, dp(34)).apply { marginEnd = dp(5) }
-            layoutParams = lp
-            setOnClickListener { action() }
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xFF394458.toInt(), 0xFF202938.toInt())).apply {
+                cornerRadius = dp(15).toFloat()
+                setStroke(dp(1), 0x557E91B5)
+            }
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            layoutParams = LinearLayout.LayoutParams(-2, dp(38)).apply { marginEnd = dp(5) }
+            setOnClickListener { action(); animate().scaleX(.94f).scaleY(.94f).setDuration(75).withEndAction {
+                animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+            }.start() }
         }
 
     private fun resize() {
         val view = root ?: return
         try {
             val p = view.layoutParams as WindowManager.LayoutParams
-            p.width = dp(if (expanded) 286 else 204)
+            val screenWidth = resources.displayMetrics.widthPixels
+            p.width = min(if (expanded) dp(326) else dp(224), screenWidth - dp(24))
             wm.updateViewLayout(view, p)
+            view.animate().scaleX(if (expanded) 1f else .98f).scaleY(if (expanded) 1f else .98f)
+                .setDuration(180).setInterpolator(DecelerateInterpolator()).start()
         } catch (_: Exception) {}
     }
 
-    private fun send(pending: PendingIntent?) {
-        try { pending?.send() } catch (_: Exception) {}
-    }
+    private fun send(pending: PendingIntent?) { try { pending?.send() } catch (_: Exception) {} }
 
     private fun startTimer(duration: Long) {
         timer?.cancel()
@@ -294,6 +338,8 @@ class IslandService : Service() {
                 render()
             }
         }.start()
+        expanded = true
+        resize()
         render()
     }
 
