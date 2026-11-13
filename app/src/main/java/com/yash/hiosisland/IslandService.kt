@@ -15,7 +15,6 @@ import android.view.WindowManager
 import android.view.animation.DecelerateInterpolator
 import android.widget.*
 import kotlin.math.abs
-import kotlin.math.max
 import kotlin.math.min
 import java.util.Locale
 
@@ -33,6 +32,8 @@ class IslandService : Service() {
     private var notificationTitle = "HiOS Island"
     private var notificationText = "Tap to explore live activities"
     private var notificationPackage = ""
+    private var notificationKey = ""
+    private var notificationContentIntent: PendingIntent? = null
     private var batteryLevel = 0
     private var charging = false
     private var mediaToggle: PendingIntent? = null
@@ -58,16 +59,23 @@ class IslandService : Service() {
                     notificationTitle = intent.getStringExtra("title") ?: "Notification"
                     notificationText = intent.getStringExtra("text") ?: ""
                     notificationPackage = intent.getStringExtra("package").orEmpty()
+                    notificationKey = intent.getStringExtra("notification_key").orEmpty()
+                    notificationContentIntent = getPending(intent, "content_intent")
                     mediaToggle = getPending(intent, "media_toggle")
                     mediaNext = getPending(intent, "media_next")
                     mediaPrevious = getPending(intent, "media_previous")
                     render()
                 }
                 ACTION_NOTIFICATION_REMOVED -> {
-                    notificationTitle = "HiOS Island"
-                    notificationText = "You're all caught up"
-                    notificationPackage = ""
-                    render()
+                    val removedKey = intent.getStringExtra("notification_key").orEmpty()
+                    if (removedKey.isNotBlank() && removedKey == notificationKey) {
+                        notificationTitle = "HiOS Island"
+                        notificationText = "You're all caught up"
+                        notificationPackage = ""
+                        notificationKey = ""
+                        notificationContentIntent = null
+                        render()
+                    }
                 }
                 ACTION_MEDIA_SESSION -> {
                     mediaTitle = intent.getStringExtra("media_title").orEmpty()
@@ -241,6 +249,10 @@ class IslandService : Service() {
                 else -> "Your notifications and activities appear here"
             }
             card.addView(text(subtitle, 11f, 0xFFB6C2D5.toInt()).apply { maxLines = 3 }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+            if (notificationContentIntent != null && mediaTitle.isBlank() && timerEnd == 0L) {
+                card.isClickable = true
+                card.setOnClickListener { send(notificationContentIntent); expanded = false; resize(); render() }
+            }
             if (mediaTitle.isNotBlank() && mediaDuration > 0L) {
                 val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                     max = 1000
