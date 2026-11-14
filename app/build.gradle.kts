@@ -11,8 +11,8 @@ android {
         applicationId = "com.yash.hiosisland"
         minSdk = 23
         targetSdk = 32
-        versionCode = 6
-        versionName = "2.3"
+        versionCode = 7
+        versionName = "2.4"
     }
     buildFeatures { compose = true }
     compileOptions {
