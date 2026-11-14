@@ -68,16 +68,31 @@ class IslandNotificationListener : NotificationListenerService() {
         val extras = notification.extras ?: return
         if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
-        val body = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
-            ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
-        if (title.isBlank() && body.isBlank()) return
+        val body = (extras.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: extras.getCharSequence(Notification.EXTRA_TEXT))?.toString().orEmpty()
+        val searchable = (title + " " + body + " " + sbn.packageName).lowercase()
+        val ongoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0
+        val max = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        val progress = extras.getInt(Notification.EXTRA_PROGRESS, -1)
+        val recording = ongoing && (listOf("recording", "voice recorder", "audio recording", "recording audio", "voice recording", "mic is in use").any { searchable.contains(it) } || sbn.packageName.contains("recorder", true))
+        val stopwatch = ongoing && listOf("stopwatch", "stop watch", "elapsed time").any { searchable.contains(it) }
+        val timer = ongoing && listOf("timer", "countdown", "time remaining").any { searchable.contains(it) }
+        val download = ongoing && ((max > 0 && progress >= 0) || listOf("downloading", "download in progress", "file download").any { searchable.contains(it) } || sbn.packageName.contains("download", true))
+        val kind = when { recording -> "Recording"; stopwatch -> "Stopwatch"; timer -> "Timer"; download -> "Download"; else -> "" }
+        if (kind.isBlank()) {
+            sendBroadcast(Intent(IslandService.ACTION_NOTIFICATION_REMOVED).apply { setPackage(packageName); putExtra("notification_key", sbn.key) })
+            return
+        }
         sendBroadcast(Intent(IslandService.ACTION_NOTIFICATION).apply {
             setPackage(packageName)
-            putExtra("title", title.take(100))
+            putExtra("title", title.ifBlank { kind }.take(100))
             putExtra("text", body.take(240))
             putExtra("package", sbn.packageName)
             putExtra("notification_key", sbn.key)
             putExtra("content_intent", notification.contentIntent)
+            putExtra("is_live_activity", true)
+            putExtra("live_kind", kind)
+            putExtra("progress", progress)
+            putExtra("progress_max", max)
             putExtra("when", sbn.postTime)
         })
     }
