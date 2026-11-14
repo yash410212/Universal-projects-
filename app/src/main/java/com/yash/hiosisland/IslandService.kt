@@ -38,10 +38,6 @@ class IslandService : Service() {
     private var liveActivityKind = ""
     private var liveProgress = -1
     private var liveProgressMax = 0
-    private var notificationIsLiveActivity = false
-    private var liveActivityKind = ""
-    private var liveProgress = -1
-    private var liveProgressMax = 0
     private var batteryLevel = 0
     private var charging = false
     private var mediaToggle: PendingIntent? = null
