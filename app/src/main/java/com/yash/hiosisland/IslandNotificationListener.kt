@@ -31,11 +31,14 @@ class IslandNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         publishActiveMediaSession()
+        // Ignore this app own foreground-service notification to prevent a self-notification loop.
+        if (sbn.packageName == packageName) return
         publishNotification(sbn)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         publishActiveMediaSession()
+        if (sbn.packageName == packageName) return
         sendBroadcast(Intent(IslandService.ACTION_NOTIFICATION_REMOVED).apply {
             setPackage(packageName)
             putExtra("notification_key", sbn.key)
@@ -49,7 +52,7 @@ class IslandNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         publishActiveMediaSession()
-        try { activeNotifications?.maxByOrNull { it.postTime }?.let { publishNotification(it) } }
+        try { activeNotifications?.filterNot { it.packageName == packageName }?.maxByOrNull { it.postTime }?.let { publishNotification(it) } }
         catch (_: Exception) { }
     }
 
@@ -60,6 +63,7 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     private fun publishNotification(sbn: StatusBarNotification) {
+        if (sbn.packageName == packageName) return
         val notification = sbn.notification ?: return
         val extras = notification.extras ?: return
         if (notification.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
