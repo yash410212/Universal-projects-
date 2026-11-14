@@ -38,6 +38,10 @@ class IslandService : Service() {
     private var liveActivityKind = ""
     private var liveProgress = -1
     private var liveProgressMax = 0
+    private var notificationIsLiveActivity = false
+    private var liveActivityKind = ""
+    private var liveProgress = -1
+    private var liveProgressMax = 0
     private var batteryLevel = 0
     private var charging = false
     private var mediaToggle: PendingIntent? = null
@@ -65,6 +69,10 @@ class IslandService : Service() {
                     notificationPackage = intent.getStringExtra("package").orEmpty()
                     notificationKey = intent.getStringExtra("notification_key").orEmpty()
                     notificationContentIntent = getPending(intent, "content_intent")
+                    notificationIsLiveActivity = intent.getBooleanExtra("is_live_activity", false)
+                    liveActivityKind = intent.getStringExtra("live_kind").orEmpty()
+                    liveProgress = intent.getIntExtra("progress", -1)
+                    liveProgressMax = intent.getIntExtra("progress_max", 0)
                     mediaToggle = getPending(intent, "media_toggle")
                     mediaNext = getPending(intent, "media_next")
                     mediaPrevious = getPending(intent, "media_previous")
@@ -146,8 +154,8 @@ class IslandService : Service() {
     private fun serviceNotification(): Notification {
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("HiOS Island is active")
-            .setContentText("Tap to manage your live island").setContentIntent(open).setOngoing(true).build()
+            .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("Live activity service")
+            .setContentText(" ").setContentIntent(open).setOngoing(true).build()
         else @Suppress("DEPRECATION") Notification.Builder(this)
             .setSmallIcon(android.R.drawable.ic_dialog_info).setContentTitle("HiOS Island is active")
             .setContentText("Tap to manage your live island").setContentIntent(open).setOngoing(true).build()
@@ -159,14 +167,11 @@ class IslandService : Service() {
         val id = resources.getIdentifier("status_bar_height", "dimen", "android")
         return if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
     }
-    private fun glassBackground(radius: Int, expandedCard: Boolean = false): GradientDrawable {
-        val colors = if (expandedCard) intArrayOf(0xF51B2230.toInt(), 0xF20D111B.toInt(), 0xF5222938.toInt())
-            else intArrayOf(0xF51A202B.toInt(), 0xF70A0D13.toInt(), 0xF51B2230.toInt())
-        return GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply {
+    private fun glassBackground(radius: Int, expandedCard: Boolean = false): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.BLACK, Color.BLACK)).apply {
             cornerRadius = dp(radius).toFloat()
-            setStroke(dp(1), 0x667F91B5)
+            setStroke(dp(1), 0xFF292929.toInt())
         }
-    }
     private fun text(value: String, size: Float, color: Int, bold: Boolean = false): TextView =
         TextView(this).apply {
             text = value
@@ -205,111 +210,65 @@ class IslandService : Service() {
         } catch (_: Exception) { root = null }
     }
 
+    private fun hasActiveActivity(): Boolean =
+        timerEnd > System.currentTimeMillis() || mediaPlaying || notificationIsLiveActivity
+
     private fun render() {
         val box = root ?: return
+        if (!hasActiveActivity()) {
+            box.animate().cancel()
+            box.visibility = View.GONE
+            return
+        }
+        box.visibility = View.VISIBLE
+        expanded = true
         box.removeAllViews()
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(3), dp(2), dp(3), dp(2))
+            setPadding(dp(5), dp(4), dp(5), dp(4))
         }
-        val indicator = TextView(this).apply {
-            text = when { charging -> "ϟ"; mediaPlaying -> "♫"; timerEnd > 0L -> "◷"; else -> "●" }
-            textSize = 16f
-            setTextColor(if (charging) 0xFF8DE6B5.toInt() else 0xFFB4C8FF.toInt())
-            gravity = Gravity.CENTER
+        val symbol = when {
+            timerEnd > System.currentTimeMillis() -> "◷"
+            mediaPlaying -> "♫"
+            liveActivityKind.equals("recording", true) -> "●"
+            liveActivityKind.equals("stopwatch", true) -> "◴"
+            else -> "↓"
         }
-        val labelValue = when {
-            timerEnd > 0L -> timerText
-            mediaTitle.isNotBlank() -> mediaTitle
-            notificationTitle != "HiOS Island" -> notificationTitle
-            else -> "HiOS Island"
+        header.addView(text(symbol, 17f, Color.WHITE, true), LinearLayout.LayoutParams(dp(25), dp(28)))
+        val titleValue = when {
+            timerEnd > System.currentTimeMillis() -> timerText.ifBlank { "Timer" }
+            mediaPlaying -> mediaTitle.ifBlank { mediaArtist.ifBlank { "Playing" } }
+            else -> notificationTitle.ifBlank { liveActivityKind }
         }
-        val label = text(labelValue.take(22), 12f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
-        val status = text(if (charging) "$batteryLevel% ϟ" else if (batteryLevel > 0) "$batteryLevel%" else "LIVE", 10f, 0xFFB9C7DF.toInt())
-        header.addView(indicator, LinearLayout.LayoutParams(dp(22), dp(27)))
-        header.addView(label, LinearLayout.LayoutParams(0, dp(27), 1f).apply { marginStart = dp(5) })
-        header.addView(status)
-        header.setOnClickListener { expanded = !expanded; resize(); render() }
+        header.addView(text(titleValue.take(48), 13f, Color.WHITE, true).apply {
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, dp(28), 1f).apply { marginStart = dp(5) })
+        if (timerEnd > System.currentTimeMillis()) header.addView(text(timerText, 12f, Color.WHITE))
+        header.setOnClickListener { notificationContentIntent?.let { send(it) } }
         box.addView(header)
-
-        if (expanded) {
-            val divider = View(this).apply { setBackgroundColor(0x557E8DA8) }
-            box.addView(divider, LinearLayout.LayoutParams(-1, dp(1)).apply { topMargin = dp(7); bottomMargin = dp(10) })
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                background = glassBackground(22, true)
-                setPadding(dp(12), dp(11), dp(12), dp(11))
+        if (mediaPlaying && mediaDuration > 0L) {
+            val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 1000
+                progress = ((mediaPosition.toFloat() / mediaDuration).coerceIn(0f, 1f) * 1000).toInt()
+                progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0xFF444444.toInt())
             }
-            val typeLabel = when {
-                timerEnd > 0L -> "TIMER"
-                mediaTitle.isNotBlank() -> "NOW PLAYING"
-                notificationTitle != "HiOS Island" -> "NOTIFICATION"
-                charging -> "POWER"
-                else -> "LIVE ISLAND"
+            box.addView(bar, LinearLayout.LayoutParams(-1, dp(2)).apply { topMargin = dp(4); bottomMargin = dp(4) })
+            val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+            controls.addView(actionButton("⏮") { safeMediaAction { mediaController?.transportControls?.skipToPrevious() } })
+            controls.addView(actionButton("Ⅱ") { safeMediaAction { mediaController?.transportControls?.pause() } })
+            controls.addView(actionButton("⏭") { safeMediaAction { mediaController?.transportControls?.skipToNext() } })
+            box.addView(controls)
+        } else if (notificationIsLiveActivity && liveProgressMax > 0 && liveProgress >= 0) {
+            val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = liveProgressMax.coerceAtLeast(1)
+                progress = liveProgress.coerceIn(0, max)
+                progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0xFF444444.toInt())
             }
-            card.addView(text(typeLabel, 9f, 0xFF9EAFCC.toInt(), true))
-            val title = text(when {
-                timerEnd > 0L -> "Countdown running"
-                mediaTitle.isNotBlank() -> mediaTitle
-                else -> notificationTitle
-            }, 15f, Color.WHITE, true).apply { maxLines = 2 }
-            card.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-            val subtitle = when {
-                timerEnd > 0L -> "Time remaining  •  $timerText"
-                mediaTitle.isNotBlank() -> mediaArtist.ifBlank { "Media session active" }
-                notificationTitle != "HiOS Island" -> notificationText.ifBlank { notificationPackage }
-                charging -> "Battery at $batteryLevel%  •  Charging"
-                else -> "Your notifications and activities appear here"
-            }
-            card.addView(text(subtitle, 11f, 0xFFB6C2D5.toInt()).apply { maxLines = 3 }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-            if (notificationContentIntent != null && mediaTitle.isBlank() && timerEnd == 0L) {
-                card.isClickable = true
-                card.setOnClickListener { send(notificationContentIntent); expanded = false; resize(); render() }
-            }
-            if (mediaTitle.isNotBlank() && mediaDuration > 0L) {
-                val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                    max = 1000
-                    progress = ((mediaPosition.toFloat() / mediaDuration).coerceIn(0f, 1f) * 1000).toInt()
-                    progressTintList = android.content.res.ColorStateList.valueOf(0xFFB9C9FF.toInt())
-                    progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0x557F8CA6)
-                }
-                card.addView(progress, LinearLayout.LayoutParams(-1, dp(3)).apply { topMargin = dp(10) })
-            }
-            box.addView(card, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(9) })
-
-            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-            if (mediaController != null) {
-                actions.addView(actionButton("⏮") { safeMediaAction { mediaController?.transportControls?.skipToPrevious() } })
-                actions.addView(actionButton(if (mediaPlaying) "Ⅱ" else "▶") {
-                    safeMediaAction { if (mediaPlaying) mediaController?.transportControls?.pause() else mediaController?.transportControls?.play() }
-                }, LinearLayout.LayoutParams(0, dp(38), 1f).apply { marginEnd = dp(5) })
-                actions.addView(actionButton("⏭") { safeMediaAction { mediaController?.transportControls?.skipToNext() } })
-            } else {
-                if (mediaPrevious != null) actions.addView(actionButton("⏮") { send(mediaPrevious) })
-                if (mediaToggle != null) actions.addView(actionButton("▶ / Ⅱ") { send(mediaToggle) })
-                if (mediaNext != null) actions.addView(actionButton("⏭") { send(mediaNext) })
-            }
-            actions.addView(actionButton("5m") { startTimer(5 * 60_000L) })
-            actions.addView(actionButton("15m") { startTimer(15 * 60_000L) })
-            actions.addView(actionButton("×") { cancelTimer(); expanded = false; resize(); render() })
-            box.addView(actions)
-            box.addView(text("Tap pill to collapse  •  Swipe up to close", 9f, 0xFF7F8CA5.toInt()).apply { gravity = Gravity.CENTER; setPadding(0, dp(9), 0, 0) })
-            box.alpha = 0f
-            box.animate().alpha(1f).setDuration(170).start()
-        }
-        box.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> { lastTouchX = event.rawX; lastTouchY = event.rawY; false }
-                MotionEvent.ACTION_UP -> {
-                    val dx = event.rawX - lastTouchX
-                    val dy = event.rawY - lastTouchY
-                    if (abs(dy) > dp(65) && dy < 0) { stopSelf(); true }
-                    else if (abs(dx) > dp(70)) { expanded = false; resize(); render(); true }
-                    else false
-                }
-                else -> false
-            }
+            box.addView(bar, LinearLayout.LayoutParams(-1, dp(3)).apply { topMargin = dp(5) })
         }
     }
 
@@ -322,9 +281,9 @@ class IslandService : Service() {
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(0xFF394458.toInt(), 0xFF202938.toInt())).apply {
+                intArrayOf(Color.BLACK, Color.BLACK)).apply {
                 cornerRadius = dp(15).toFloat()
-                setStroke(dp(1), 0x557E91B5)
+                setStroke(dp(1), 0xFF333333.toInt())
             }
             setPadding(dp(10), dp(8), dp(10), dp(8))
             layoutParams = LinearLayout.LayoutParams(-2, dp(38)).apply { marginEnd = dp(5) }
