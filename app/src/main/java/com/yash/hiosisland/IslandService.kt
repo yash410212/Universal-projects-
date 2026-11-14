@@ -34,6 +34,10 @@ class IslandService : Service() {
     private var notificationPackage = ""
     private var notificationKey = ""
     private var notificationContentIntent: PendingIntent? = null
+    private var notificationIsLiveActivity = false
+    private var liveActivityKind = ""
+    private var liveProgress = -1
+    private var liveProgressMax = 0
     private var batteryLevel = 0
     private var charging = false
     private var mediaToggle: PendingIntent? = null
