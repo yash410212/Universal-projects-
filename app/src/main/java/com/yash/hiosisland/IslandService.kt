@@ -146,6 +146,11 @@ class IslandService : Service() {
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun statusBarHeight(): Int {
+        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+        return if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
+    }
     private fun glassBackground(radius: Int, expandedCard: Boolean = false): GradientDrawable {
         val colors = if (expandedCard) intArrayOf(0xF51B2230.toInt(), 0xF20D111B.toInt(), 0xF5222938.toInt())
             else intArrayOf(0xF51A202B.toInt(), 0xF70A0D13.toInt(), 0xF51B2230.toInt())
@@ -183,8 +188,9 @@ class IslandService : Service() {
             android.graphics.PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            y = dp(2)
-            if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            // Keep the overlay below the system status bar on devices with display cutouts.
+            y = statusBarHeight() + dp(6)
+            if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
         }
         try { wm.addView(container, params); container.alpha = 0f; container.scaleX = .92f; container.scaleY = .92f
             container.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(DecelerateInterpolator()).start()
