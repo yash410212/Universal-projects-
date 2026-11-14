@@ -74,6 +74,10 @@ class IslandService : Service() {
                         notificationPackage = ""
                         notificationKey = ""
                         notificationContentIntent = null
+                        notificationIsLiveActivity = false
+                        liveActivityKind = ""
+                        liveProgress = -1
+                        liveProgressMax = 0
                         render()
                     }
                 }
