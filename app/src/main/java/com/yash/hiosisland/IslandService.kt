@@ -219,8 +219,9 @@ class IslandService : Service() {
             box.visibility = View.GONE
             return
         }
+        val wasVisible = box.visibility == View.VISIBLE
         box.visibility = View.VISIBLE
-        expanded = true
+        if (!wasVisible) expanded = true
         box.removeAllViews()
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -258,8 +259,14 @@ class IslandService : Service() {
             chargeRow.addView(text("Charging", 12f, 0xFFE7E7E7.toInt(), true), LinearLayout.LayoutParams(0, dp(22), 1f))
             chargeRow.addView(text("$batteryLevel%", 13f, Color.WHITE, true))
             box.addView(chargeRow)
+            if (expanded) {
+                box.addView(text("Power connected  •  Battery $batteryLevel%", 11f, 0xFFBDBDBD.toInt()).apply {
+                    setPadding(dp(5), dp(2), dp(5), dp(4))
+                })
+            }
             box.setOnClickListener {
                 expanded = !expanded
+                render()
                 resize()
             }
         }
