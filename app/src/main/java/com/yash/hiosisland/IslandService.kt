@@ -47,6 +47,7 @@ class IslandService : Service() {
     private var mediaTitle = ""
     private var mediaArtist = ""
     private var mediaPlaying = false
+    private var mediaActive = false
     private var mediaDuration = 0L
     private var mediaPosition = 0L
     private var timer: CountDownTimer? = null
@@ -93,6 +94,7 @@ class IslandService : Service() {
                     mediaTitle = intent.getStringExtra("media_title").orEmpty()
                     mediaArtist = intent.getStringExtra("media_artist").orEmpty()
                     mediaPlaying = intent.getBooleanExtra("media_playing", false)
+                    mediaActive = mediaPlaying || mediaTitle.isNotBlank()
                     mediaPosition = intent.getLongExtra("media_position", 0L).coerceAtLeast(0L)
                     mediaDuration = intent.getLongExtra("media_duration", 0L).coerceAtLeast(0L)
                     val token = if (Build.VERSION.SDK_INT >= 33)
@@ -106,7 +108,8 @@ class IslandService : Service() {
                     val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
                     if (level >= 0 && scale > 0) batteryLevel = level * 100 / scale
                     val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                    charging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+                    val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+                    charging = plugged && (status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL)
                     render()
                 }
             }
@@ -207,7 +210,7 @@ class IslandService : Service() {
     }
 
     private fun hasActiveActivity(): Boolean =
-        timerEnd > System.currentTimeMillis() || mediaPlaying || notificationIsLiveActivity
+        timerEnd > System.currentTimeMillis() || mediaActive || notificationIsLiveActivity || charging
 
     private fun render() {
         val box = root ?: return
@@ -226,7 +229,8 @@ class IslandService : Service() {
         }
         val symbol = when {
             timerEnd > System.currentTimeMillis() -> "◷"
-            mediaPlaying -> "♫"
+            mediaActive -> "♫"
+            charging -> "ϟ"
             liveActivityKind.equals("recording", true) -> "●"
             liveActivityKind.equals("stopwatch", true) -> "◴"
             else -> "↓"
@@ -234,7 +238,8 @@ class IslandService : Service() {
         header.addView(text(symbol, 17f, Color.WHITE, true), LinearLayout.LayoutParams(dp(25), dp(28)))
         val titleValue = when {
             timerEnd > System.currentTimeMillis() -> timerText.ifBlank { "Timer" }
-            mediaPlaying -> mediaTitle.ifBlank { mediaArtist.ifBlank { "Playing" } }
+            mediaActive -> mediaTitle.ifBlank { mediaArtist.ifBlank { if (mediaPlaying) "Playing" else "Music" } }
+            charging -> "Charging"
             else -> notificationTitle.ifBlank { liveActivityKind }
         }
         header.addView(text(titleValue.take(48), 13f, Color.WHITE, true).apply {
@@ -244,7 +249,21 @@ class IslandService : Service() {
         if (timerEnd > System.currentTimeMillis()) header.addView(text(timerText, 12f, Color.WHITE))
         header.setOnClickListener { notificationContentIntent?.let { send(it) } }
         box.addView(header)
-        if (mediaPlaying && mediaDuration > 0L) {
+        if (charging && !mediaActive && timerEnd <= System.currentTimeMillis() && !notificationIsLiveActivity) {
+            val chargeRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(5), dp(3), dp(5), dp(2))
+            }
+            chargeRow.addView(text("Charging", 12f, 0xFFE7E7E7.toInt(), true), LinearLayout.LayoutParams(0, dp(22), 1f))
+            chargeRow.addView(text("$batteryLevel%", 13f, Color.WHITE, true))
+            box.addView(chargeRow)
+            box.setOnClickListener {
+                expanded = !expanded
+                resize()
+            }
+        }
+        if (mediaActive && mediaDuration > 0L) {
             val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
                 max = 1000
                 progress = ((mediaPosition.toFloat() / mediaDuration).coerceIn(0f, 1f) * 1000).toInt()
@@ -254,7 +273,7 @@ class IslandService : Service() {
             box.addView(bar, LinearLayout.LayoutParams(-1, dp(2)).apply { topMargin = dp(4); bottomMargin = dp(4) })
             val controls = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
             controls.addView(actionButton("⏮") { safeMediaAction { mediaController?.transportControls?.skipToPrevious() } })
-            controls.addView(actionButton("Ⅱ") { safeMediaAction { mediaController?.transportControls?.pause() } })
+            controls.addView(actionButton(if (mediaPlaying) "Ⅱ" else "▶") { safeMediaAction { if (mediaPlaying) mediaController?.transportControls?.pause() else mediaController?.transportControls?.play() } })
             controls.addView(actionButton("⏭") { safeMediaAction { mediaController?.transportControls?.skipToNext() } })
             box.addView(controls)
         } else if (notificationIsLiveActivity && liveProgressMax > 0 && liveProgress >= 0) {
@@ -265,6 +284,11 @@ class IslandService : Service() {
                 progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0xFF444444.toInt())
             }
             box.addView(bar, LinearLayout.LayoutParams(-1, dp(3)).apply { topMargin = dp(5) })
+        }
+        if (charging && (mediaActive || timerEnd > System.currentTimeMillis() || notificationIsLiveActivity)) {
+            box.addView(text("Charging  •  $batteryLevel%", 11f, 0xFFE7E7E7.toInt(), true).apply {
+                setPadding(dp(5), dp(5), dp(5), dp(2))
+            })
         }
     }
 
