@@ -73,10 +73,10 @@ class IslandNotificationListener : NotificationListenerService() {
         val ongoing = notification.flags and Notification.FLAG_ONGOING_EVENT != 0
         val max = extras.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
         val progress = extras.getInt(Notification.EXTRA_PROGRESS, -1)
-        val recording = ongoing && (listOf("recording", "voice recorder", "audio recording", "recording audio", "voice recording", "mic is in use").any { searchable.contains(it) } || sbn.packageName.contains("recorder", true))
-        val stopwatch = ongoing && listOf("stopwatch", "stop watch", "elapsed time").any { searchable.contains(it) }
-        val timer = ongoing && listOf("timer", "countdown", "time remaining").any { searchable.contains(it) }
-        val download = ongoing && ((max > 0 && progress >= 0) || listOf("downloading", "download in progress", "file download").any { searchable.contains(it) } || sbn.packageName.contains("download", true))
+        val recording = (listOf("recording", "voice recorder", "audio recording", "recording audio", "voice recording", "mic is in use").any { searchable.contains(it) } || sbn.packageName.contains("recorder", true))
+        val stopwatch = listOf("stopwatch", "stop watch", "elapsed time").any { searchable.contains(it) }
+        val timer = listOf("timer", "countdown", "time remaining").any { searchable.contains(it) }
+        val download = ((max > 0 && progress >= 0) && (ongoing || notification.category == Notification.CATEGORY_PROGRESS)) || listOf("downloading", "download in progress", "file download").any { searchable.contains(it) } || sbn.packageName.contains("download", true)
         val kind = when { recording -> "Recording"; stopwatch -> "Stopwatch"; timer -> "Timer"; download -> "Download"; else -> "" }
         if (kind.isBlank()) {
             sendBroadcast(Intent(IslandService.ACTION_NOTIFICATION_REMOVED).apply { setPackage(packageName); putExtra("notification_key", sbn.key) })
